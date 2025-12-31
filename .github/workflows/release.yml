@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.ref_name }}'
+          $dist = 'dist'
+          $zip = "eye_breaker-${{ github.ref_name }}-win64.zip"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item -Force -Path "build\Release\eye_breaker.exe" -Destination $dist
+          Copy-Item -Recurse -Force -Path "assets" -Destination $dist
+          Copy-Item -Force -Path "config.json" -Destination $dist
+          Copy-Item -Force -Path "README.md" -Destination $dist
+          Copy-Item -Force -Path "README_ZH.md" -Destination $dist
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Compress-Archive -Path "$dist\*" -DestinationPath $zip
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: eye_breaker-${{ github.ref_name }}-win64.zip
