@@ -1,0 +1,21 @@
+{
+  "language": "en",
+  "autostart": false,
+  "work_interval_minutes": 20,
+  "rest_seconds": 20,
+  "fade_ms": 600,
+  "fps": 20,
+  "bg_color": "#111111",
+  "text_color": "#CFCFCF",
+  "message": "Look far and blink",
+
+  "visual_mode": "image",
+  "image_path": "assets\\bg.png",
+  "image_mode": "fit",
+  "image_opacity": 0.35,
+
+  "breath_cycle_ms": 9000,
+  "breath_min_radius": 80,
+  "breath_max_radius": 140,
+  "breath_opacity": 0.35
+}

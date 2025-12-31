@@ -1,0 +1,25 @@
+﻿# Eye Break language strings (en)
+tray_tooltip=Eye Break
+menu_open_settings=Open Settings
+menu_show_overlay=Show Overlay Now
+menu_reload_config=Reload Config
+menu_about=About
+menu_exit=Exit
+settings_title=Eye Break Settings
+btn_save=Save
+btn_reload=Reload
+about_title=About Eye Break
+about_header=Eye Break
+about_usage=Usage:
+about_tray_right=- Tray right-click: menu
+about_tray_double=- Double-click: open settings
+about_tray_single=- Single click: show overlay
+about_config=Config file:
+about_keys=Key options:
+about_lang=- language: en/zh
+about_autostart=- autostart: true/false
+about_work_interval=- work_interval_minutes: 0 disables periodic
+about_basic=- rest_seconds, fade_ms, fps
+about_visual=- visual_mode: breathing | image | image+breathing
+about_image=- image_path, image_mode: fit/fill/center
+about_breath=- image_opacity, breath_cycle_ms, breath_min_radius, breath_max_radius, breath_opacity

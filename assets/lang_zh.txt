@@ -1,0 +1,25 @@
+﻿# Eye Break language strings (zh)
+tray_tooltip=护眼休息
+menu_open_settings=打开设置
+menu_show_overlay=立即休息
+menu_reload_config=重载配置
+menu_about=关于
+menu_exit=退出
+settings_title=护眼设置
+btn_save=保存
+btn_reload=重载
+about_title=关于 Eye Break
+about_header=护眼休息
+about_usage=使用说明:
+about_tray_right=- 托盘右键：菜单
+about_tray_double=- 双击：打开设置
+about_tray_single=- 单击：显示遮罩
+about_config=配置文件:
+about_keys=主要配置项:
+about_lang=- language: en/zh
+about_autostart=- autostart: true/false
+about_work_interval=- work_interval_minutes: 0 表示关闭周期
+about_basic=- rest_seconds, fade_ms, fps
+about_visual=- visual_mode: breathing | image | image+breathing
+about_image=- image_path, image_mode: fit/fill/center
+about_breath=- image_opacity, breath_cycle_ms, breath_min_radius, breath_max_radius, breath_opacity

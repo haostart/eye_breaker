@@ -1,0 +1,35 @@
+# Build artifacts
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.dir/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj*
+*.filters
+*.user
+*.VC.db
+*.VC.opendb
+
+# Binaries
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+*.ilk
+*.exp
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Generated configs
+build/**/config.json
