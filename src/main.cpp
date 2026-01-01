@@ -42,6 +42,13 @@ constexpr UINT kCmdExit = 1005;
 constexpr UINT kSettingsSaveId = 2001;
 constexpr UINT kSettingsReloadId = 2002;
 
+#ifndef NIN_POPUPOPEN
+#define NIN_POPUPOPEN (WM_USER + 6)
+#endif
+#ifndef NIF_SHOWTIP
+#define NIF_SHOWTIP 0x00000080
+#endif
+
 enum class VisualMode { Breathing, Image, ImageBreathing };
 enum class ImageMode { Fit, Fill, Center };
 enum class Language { English, Chinese };
@@ -98,6 +105,7 @@ bool g_tray_click_pending = false;
 HICON g_tray_icon = nullptr;
 bool g_tray_icon_owned = false;
 std::unordered_map<std::string, std::wstring> g_i18n;
+ULONGLONG g_next_overlay_tick = 0;
 
 ID2D1Factory* g_d2d_factory = nullptr;
 ID2D1HwndRenderTarget* g_render_target = nullptr;
@@ -123,6 +131,8 @@ void UpdateLocalizedWindowTexts();
 void LoadLocalization();
 std::wstring Tr(const char* key, const wchar_t* fallback);
 std::wstring BuildAboutText();
+std::wstring BuildTrayTooltip();
+void UpdateTrayTooltip();
 
 void SafeRelease(IUnknown* obj) {
     if (obj) {
@@ -431,6 +441,55 @@ std::wstring Tr(const char* key, const wchar_t* fallback) {
         }
     }
     return fallback ? std::wstring(fallback) : std::wstring();
+}
+
+std::wstring BuildTrayTooltip() {
+    if (g_overlay_visible) {
+        return Tr("tray_tooltip_active", L"Eye Break (active)");
+    }
+    if (g_config.work_interval_minutes <= 0.0 || g_next_overlay_tick == 0) {
+        return Tr("tray_tooltip_disabled", L"Eye Break (periodic off)");
+    }
+
+    ULONGLONG now = GetTickCount64();
+    if (g_next_overlay_tick <= now) {
+        return Tr("tray_tooltip_soon", L"Eye Break (soon)");
+    }
+
+    ULONGLONG remaining_ms = g_next_overlay_tick - now;
+    FILETIME ft{};
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    if (SystemTimeToFileTime(&local, &ft)) {
+        ULARGE_INTEGER uli{};
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        uli.QuadPart += remaining_ms * 10000ULL;
+        ft.dwLowDateTime = uli.LowPart;
+        ft.dwHighDateTime = uli.HighPart;
+        if (FileTimeToSystemTime(&ft, &local)) {
+            wchar_t time_buf[16] = {};
+            swprintf_s(time_buf, L"%02u:%02u:%02u", local.wHour, local.wMinute, local.wSecond);
+            std::wstring prefix = Tr("tray_tooltip_next", L"Next break: ");
+            return prefix + time_buf;
+        }
+    }
+
+    return Tr("tray_tooltip_soon", L"Eye Break (soon)");
+}
+
+void UpdateTrayTooltip() {
+    if (!g_tray_hwnd) {
+        return;
+    }
+    NOTIFYICONDATA nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_tray_hwnd;
+    nid.uID = kTrayId;
+    nid.uFlags = NIF_TIP | NIF_SHOWTIP;
+    std::wstring tip = BuildTrayTooltip();
+    wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
+    Shell_NotifyIcon(NIM_MODIFY, &nid);
 }
 
 bool ParseHexColor(const std::string& text, D2D1_COLOR_F* color) {
@@ -970,17 +1029,18 @@ bool AddTrayIcon(HWND hwnd) {
     nid.cbSize = sizeof(nid);
     nid.hWnd = hwnd;
     nid.uID = kTrayId;
-    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     nid.uCallbackMessage = g_tray_msg;
     g_tray_icon = LoadTrayIcon();
     nid.hIcon = g_tray_icon;
-    std::wstring tip = Tr("tray_tooltip", L"Eye Break");
+    std::wstring tip = BuildTrayTooltip();
     wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
     if (!Shell_NotifyIcon(NIM_ADD, &nid)) {
         return false;
     }
     nid.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIcon(NIM_SETVERSION, &nid);
+    UpdateTrayTooltip();
     return true;
 }
 
@@ -1059,6 +1119,8 @@ void UpdateWorkTimer() {
     }
     KillTimer(g_tray_hwnd, kWorkTimerId);
     if (g_config.work_interval_minutes <= 0.0) {
+        g_next_overlay_tick = 0;
+        UpdateTrayTooltip();
         return;
     }
     double ms = g_config.work_interval_minutes * 60.0 * 1000.0;
@@ -1069,6 +1131,8 @@ void UpdateWorkTimer() {
         ms = static_cast<double>(UINT_MAX);
     }
     SetTimer(g_tray_hwnd, kWorkTimerId, static_cast<UINT>(ms), nullptr);
+    g_next_overlay_tick = GetTickCount64() + static_cast<ULONGLONG>(ms);
+    UpdateTrayTooltip();
 }
 
 void ApplyAutostart() {
@@ -1120,16 +1184,7 @@ void UpdateLocalizedWindowTexts() {
             SetWindowTextW(g_about_edit, text.c_str());
         }
     }
-    if (g_tray_hwnd) {
-        NOTIFYICONDATA nid{};
-        nid.cbSize = sizeof(nid);
-        nid.hWnd = g_tray_hwnd;
-        nid.uID = kTrayId;
-        nid.uFlags = NIF_TIP;
-        std::wstring tip = Tr("tray_tooltip", L"Eye Break");
-        wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
-        Shell_NotifyIcon(NIM_MODIFY, &nid);
-    }
+    UpdateTrayTooltip();
 }
 
 void LoadConfigIntoEditor() {
@@ -1407,7 +1462,9 @@ void ShowAboutWindow(HWND owner) {
 LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (msg == g_tray_msg) {
         UINT mouse_msg = LOWORD(lparam);
-        if (mouse_msg == WM_RBUTTONUP || mouse_msg == WM_CONTEXTMENU) {
+        if (mouse_msg == NIN_POPUPOPEN) {
+            UpdateTrayTooltip();
+        } else if (mouse_msg == WM_RBUTTONUP || mouse_msg == WM_CONTEXTMENU) {
             ShowTrayMenu(hwnd);
         } else if (mouse_msg == WM_LBUTTONDBLCLK) {
             if (g_tray_click_pending) {
@@ -1423,6 +1480,9 @@ LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     }
 
     switch (msg) {
+        case NIN_POPUPOPEN:
+            UpdateTrayTooltip();
+            return 0;
         case WM_COMMAND:
             HandleTrayCommand(LOWORD(wparam));
             return 0;
