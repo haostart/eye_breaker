@@ -394,6 +394,18 @@ std::wstring FindAssetsDir() {
     return L"";
 }
 
+std::wstring ResolvePathRelativeTo(const std::wstring& base_dir, const std::wstring& input) {
+    if (input.empty()) {
+        return input;
+    }
+    std::filesystem::path p(input);
+    if (p.is_absolute()) {
+        return input;
+    }
+    std::filesystem::path base(base_dir.empty() ? GetExeDirectory() : base_dir);
+    return (base / p).lexically_normal().wstring();
+}
+
 void LoadLocalization() {
     g_i18n.clear();
     std::wstring assets_dir = FindAssetsDir();
@@ -587,6 +599,12 @@ std::string BuildConfigJson(const Config& cfg) {
 void LoadConfig() {
     Config cfg;
     std::wstring config_path = ResolveConfigPath();
+    std::wstring config_dir;
+    try {
+        config_dir = std::filesystem::path(config_path).parent_path().wstring();
+    } catch (...) {
+        config_dir = GetExeDirectory();
+    }
     bool existed = FileExists(config_path);
     std::string json = ReadFileUtf8(config_path);
     if (json.empty() && !existed) {
@@ -675,6 +693,10 @@ void LoadConfig() {
     if (cfg.work_interval_minutes < 0.0) {
         cfg.work_interval_minutes = 0.0;
     }
+
+    // Make image path stable across launch contexts (e.g. autostart has a different working directory).
+    cfg.image_path = ResolvePathRelativeTo(config_dir, cfg.image_path);
+
     cfg.fps = std::clamp(cfg.fps, kMinFps, kMaxFps);
     cfg.fade_ms = std::max(cfg.fade_ms, kMinFadeSeconds * 1000.0);
     cfg.rest_seconds = std::max(cfg.rest_seconds, kMinRestSeconds);
