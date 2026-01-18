@@ -1,6 +1,7 @@
 ﻿# Eye Break language strings (zh)
 tray_tooltip_active=护眼休息（进行中）
 tray_tooltip_disabled=护眼休息（周期关闭）
+tray_tooltip_paused=护眼休息（全屏暂停）
 tray_tooltip_next=下次休息：
 tray_tooltip_soon=护眼休息（即将开始）
 menu_open_settings=打开设置

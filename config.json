@@ -1,6 +1,7 @@
 {
   "language": "en",
   "autostart": false,
+  "pause_on_fullscreen": true,
   "work_interval_minutes": 20,
   "rest_seconds": 20,
   "fade_ms": 600,

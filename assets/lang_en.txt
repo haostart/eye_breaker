@@ -1,6 +1,7 @@
 ﻿# Eye Break language strings (en)
 tray_tooltip_active=Eye Break (active)
 tray_tooltip_disabled=Eye Break (periodic off)
+tray_tooltip_paused=Eye Break (paused: fullscreen)
 tray_tooltip_next=Next break: 
 tray_tooltip_soon=Eye Break (soon)
 menu_open_settings=Open Settings

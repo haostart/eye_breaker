@@ -56,6 +56,7 @@ enum class Language { English, Chinese };
 struct Config {
     Language language = Language::English;
     bool autostart = false;
+    bool pause_on_fullscreen = true;
     double work_interval_minutes = 20.0;
     double rest_seconds = 20.0;
     double fade_ms = 600.0;
@@ -106,6 +107,7 @@ HICON g_tray_icon = nullptr;
 bool g_tray_icon_owned = false;
 std::unordered_map<std::string, std::wstring> g_i18n;
 ULONGLONG g_next_overlay_tick = 0;
+bool g_periodic_suppressed = false;
 
 ID2D1Factory* g_d2d_factory = nullptr;
 ID2D1HwndRenderTarget* g_render_target = nullptr;
@@ -133,6 +135,7 @@ std::wstring Tr(const char* key, const wchar_t* fallback);
 std::wstring BuildAboutText();
 std::wstring BuildTrayTooltip();
 void UpdateTrayTooltip();
+bool ShouldSuppressPeriodicOverlay();
 
 void SafeRelease(IUnknown* obj) {
     if (obj) {
@@ -455,12 +458,62 @@ std::wstring Tr(const char* key, const wchar_t* fallback) {
     return fallback ? std::wstring(fallback) : std::wstring();
 }
 
+bool IsForegroundWindowFullscreenFallback() {
+    HWND fg = GetForegroundWindow();
+    if (!fg) {
+        return false;
+    }
+    if (fg == g_overlay_hwnd || fg == g_tray_hwnd || fg == g_settings_hwnd || fg == g_about_hwnd) {
+        return false;
+    }
+    if (!IsWindowVisible(fg) || IsIconic(fg)) {
+        return false;
+    }
+
+    RECT win{};
+    if (!GetWindowRect(fg, &win)) {
+        return false;
+    }
+    HMONITOR mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(mon, &mi)) {
+        return false;
+    }
+
+    constexpr int kTol = 2;
+    RECT m = mi.rcMonitor;
+    return std::abs(win.left - m.left) <= kTol &&
+           std::abs(win.top - m.top) <= kTol &&
+           std::abs(win.right - m.right) <= kTol &&
+           std::abs(win.bottom - m.bottom) <= kTol;
+}
+
+bool ShouldSuppressPeriodicOverlay() {
+    if (!g_config.pause_on_fullscreen) {
+        return false;
+    }
+
+    QUERY_USER_NOTIFICATION_STATE state{};
+    if (SUCCEEDED(SHQueryUserNotificationState(&state))) {
+        if (state == QUNS_RUNNING_D3D_FULL_SCREEN ||
+            state == QUNS_PRESENTATION_MODE ||
+            state == QUNS_BUSY) {
+            return true;
+        }
+    }
+    return IsForegroundWindowFullscreenFallback();
+}
+
 std::wstring BuildTrayTooltip() {
     if (g_overlay_visible) {
         return Tr("tray_tooltip_active", L"Eye Break (active)");
     }
     if (g_config.work_interval_minutes <= 0.0 || g_next_overlay_tick == 0) {
         return Tr("tray_tooltip_disabled", L"Eye Break (periodic off)");
+    }
+    if (g_periodic_suppressed) {
+        return Tr("tray_tooltip_paused", L"Eye Break (paused: fullscreen)");
     }
 
     ULONGLONG now = GetTickCount64();
@@ -574,6 +627,7 @@ std::string BuildConfigJson(const Config& cfg) {
     out << "{\n";
     out << "  \"language\": \"" << (cfg.language == Language::Chinese ? "zh" : "en") << "\",\n";
     out << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << ",\n";
+    out << "  \"pause_on_fullscreen\": " << (cfg.pause_on_fullscreen ? "true" : "false") << ",\n";
     out << "  \"work_interval_minutes\": " << cfg.work_interval_minutes << ",\n";
     out << "  \"rest_seconds\": " << cfg.rest_seconds << ",\n";
     out << "  \"fade_ms\": " << cfg.fade_ms << ",\n";
@@ -620,6 +674,9 @@ void LoadConfig() {
         }
         if (ExtractBool(json, "autostart", &flag)) {
             cfg.autostart = flag;
+        }
+        if (ExtractBool(json, "pause_on_fullscreen", &flag)) {
+            cfg.pause_on_fullscreen = flag;
         }
         if (ExtractDouble(json, "work_interval_minutes", &value)) {
             cfg.work_interval_minutes = value;
@@ -1033,6 +1090,7 @@ void StartOverlay() {
 
     ResetTiming();
     g_overlay_visible = true;
+    g_periodic_suppressed = false;
     SetLayeredWindowAttributes(g_overlay_hwnd, 0, 0, LWA_ALPHA);
     if (g_tray_hwnd) {
         KillTimer(g_tray_hwnd, kWorkTimerId);
@@ -1142,6 +1200,7 @@ void UpdateWorkTimer() {
     KillTimer(g_tray_hwnd, kWorkTimerId);
     if (g_config.work_interval_minutes <= 0.0) {
         g_next_overlay_tick = 0;
+        g_periodic_suppressed = false;
         UpdateTrayTooltip();
         return;
     }
@@ -1154,6 +1213,7 @@ void UpdateWorkTimer() {
     }
     SetTimer(g_tray_hwnd, kWorkTimerId, static_cast<UINT>(ms), nullptr);
     g_next_overlay_tick = GetTickCount64() + static_cast<ULONGLONG>(ms);
+    g_periodic_suppressed = false;
     UpdateTrayTooltip();
 }
 
@@ -1519,6 +1579,15 @@ LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             if (wparam == kWorkTimerId) {
                 if (!g_overlay_visible) {
+                    if (ShouldSuppressPeriodicOverlay()) {
+                        g_periodic_suppressed = true;
+                        constexpr UINT kDeferMs = 30 * 1000;
+                        SetTimer(hwnd, kWorkTimerId, kDeferMs, nullptr);
+                        g_next_overlay_tick = GetTickCount64() + static_cast<ULONGLONG>(kDeferMs);
+                        UpdateTrayTooltip();
+                        return 0;
+                    }
+                    g_periodic_suppressed = false;
                     StartOverlay();
                 }
                 return 0;
