@@ -2,12 +2,12 @@
 
 [English] | [中文](README_ZH.md)
 
-A low-distraction eye-break overlay for Windows. It runs in the system tray and periodically shows a full-screen overlay (breathing ring / image) to remind you to rest your eyes.
+A low-distraction eye-break overlay for Windows and macOS. It runs in the system tray and periodically shows a full-screen overlay (breathing ring / image) to remind you to rest your eyes.
 
 ## Platform
 - Target/tested: Windows 11 Home (Chinese edition)
-- Toolchain: Visual Studio 2022 + CMake
-- Other Windows versions: not tested
+- Toolchain: Visual Studio 2022 + CMake (Windows), Xcode/clang + CMake (macOS)
+- Other versions: not tested
 
 ## Build & Run
 ```powershell
@@ -16,13 +16,20 @@ cmake --build build --config MinSizeRel
 .\build\MinSizeRel\eye_breaker.exe
 ```
 
+### macOS
+```bash
+cmake -S . -B build
+cmake --build build
+open build/eye_breaker.app
+```
+
 ## Tray Actions
 - Single click: show overlay (250ms delay to avoid double-click conflict)
 - Double-click: open settings
 - Right-click: tray menu (Settings / Show Now / Reload Config / About / Exit)
 
 ## Configuration
-Location: `config.json` next to the exe.
+Location: `config.json` next to the exe on Windows, or `~/Library/Application Support/eye_breaker/config.json` on macOS.
 If `config.json` does not exist, it is created on first run.
 
 Example:
@@ -45,7 +52,7 @@ Example:
 Options:
 - `language`: `en` or `zh` (loads `assets/lang_en.txt` / `assets/lang_zh.txt`)
 - `work_interval_minutes`: set to `0` to disable periodic overlay
-- `autostart`: writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- `autostart`: writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, or a LaunchAgent plist on macOS
 - `visual_mode`: `breathing` / `image` / `image+breathing`
 - `image_mode`: `fit` / `fill` / `center`
 

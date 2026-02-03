@@ -41,3 +41,33 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: eye_breaker-${{ github.ref_name }}-win64.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build build
+
+      - name: Package (DMG)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="eye_breaker-${{ github.ref_name }}-mac.dmg"
+          workdir="$(mktemp -d)"
+          cp -R "build/eye_breaker.app" "$workdir/"
+          hdiutil create -volname "Eye Break" \
+            -srcfolder "$workdir" \
+            -ov -format UDZO \
+            "$dmg"
+          rm -rf "$workdir"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: eye_breaker-${{ github.ref_name }}-mac.dmg

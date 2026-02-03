@@ -2,12 +2,12 @@
 
 [English](README.md) | [中文]
 
-一个低打扰的护眼休息遮罩程序。托盘运行，按周期弹出全屏遮罩（呼吸圈 / 自定义图片）提醒你休息眼睛。
+一个低打扰的护眼休息遮罩程序，支持 Windows / macOS。托盘运行，按周期弹出全屏遮罩（呼吸圈 / 自定义图片）提醒你休息眼睛。
 
 ## 运行平台
 - 目标/测试平台：Windows 11 家庭中文版
-- 构建工具链：Visual Studio 2022 + CMake
-- 其他 Windows 版本：未测试
+- 构建工具链：Windows 使用 Visual Studio 2022 + CMake，macOS 使用 Xcode/clang + CMake
+- 其他版本：未测试
 
 ## 构建与运行
 ```powershell
@@ -16,13 +16,20 @@ cmake --build build --config MinSizeRel
 .\build\MinSizeRel\eye_breaker.exe
 ```
 
+### macOS
+```bash
+cmake -S . -B build
+cmake --build build
+open build/eye_breaker.app
+```
+
 ## 托盘操作
 - 左键单击：显示遮罩（为避免与双击冲突，延迟 250ms）
 - 双击：打开设置
 - 右键：托盘菜单（设置 / 立即休息 / 重载配置 / 关于 / 退出）
 
 ## 配置文件
-位置：与 exe 同目录的 `config.json`。
+位置：Windows 与 exe 同目录的 `config.json`；macOS 为 `~/Library/Application Support/eye_breaker/config.json`。
 如果 `config.json` 不存在，首次运行会自动生成。
 
 示例：
@@ -45,7 +52,7 @@ cmake --build build --config MinSizeRel
 说明：
 - `language`：`en` 或 `zh`（加载 `assets/lang_en.txt` / `assets/lang_zh.txt`）
 - `work_interval_minutes`：设为 `0` 关闭周期触发
-- `autostart`：写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- `autostart`：Windows 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`；macOS 使用 LaunchAgents
 - `visual_mode`：`breathing` / `image` / `image+breathing`
 - `image_mode`：`fit` / `fill` / `center`
 
