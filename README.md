@@ -37,6 +37,8 @@ Example:
 {
   "language": "en",
   "autostart": false,
+  "pause_on_fullscreen": true,
+  "play_music": false,
   "work_interval_minutes": 20,
   "rest_seconds": 20,
   "fade_ms": 600,
@@ -53,6 +55,7 @@ Options:
 - `language`: `en` or `zh` (loads `assets/lang_en.txt` / `assets/lang_zh.txt`)
 - `work_interval_minutes`: set to `0` to disable periodic overlay
 - `autostart`: writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, or a LaunchAgent plist on macOS
+- `play_music`: set to `true` to play `assets/bgm.mp3` during eye breaks
 - `visual_mode`: `breathing` / `image` / `image+breathing`
 - `image_mode`: `fit` / `fill` / `center`
 

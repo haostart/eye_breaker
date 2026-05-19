@@ -4,6 +4,7 @@
 #include <dwrite.h>
 #include <wincodec.h>
 #include <shellapi.h>
+#include <mmsystem.h>
 #include "resource.h"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -20,6 +22,7 @@
 #pragma comment(lib, "dwrite")
 #pragma comment(lib, "windowscodecs")
 #pragma comment(lib, "shell32")
+#pragma comment(lib, "winmm")
 
 namespace {
 constexpr UINT_PTR kTimerId = 1;
@@ -57,6 +60,7 @@ struct Config {
     Language language = Language::English;
     bool autostart = false;
     bool pause_on_fullscreen = true;
+    bool play_music = false;
     double work_interval_minutes = 20.0;
     double rest_seconds = 20.0;
     double fade_ms = 600.0;
@@ -105,6 +109,7 @@ bool g_overlay_visible = false;
 bool g_tray_click_pending = false;
 HICON g_tray_icon = nullptr;
 bool g_tray_icon_owned = false;
+bool g_music_open = false;
 std::unordered_map<std::string, std::wstring> g_i18n;
 ULONGLONG g_next_overlay_tick = 0;
 bool g_periodic_suppressed = false;
@@ -136,6 +141,25 @@ std::wstring BuildAboutText();
 std::wstring BuildTrayTooltip();
 void UpdateTrayTooltip();
 bool ShouldSuppressPeriodicOverlay();
+
+double PlannedOverlaySeconds() {
+    double fade_seconds = std::max(kMinFadeSeconds, g_config.fade_ms / 1000.0);
+    return g_config.rest_seconds + fade_seconds * 2.0;
+}
+
+double RandomAudioStartSeconds(double duration_seconds, double min_remaining_seconds) {
+    if (duration_seconds <= 1.0) {
+        return 0.0;
+    }
+    double max_start = duration_seconds - std::max(0.0, min_remaining_seconds);
+    if (max_start <= 0.0) {
+        return 0.0;
+    }
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dist(0.0, max_start);
+    return dist(gen);
+}
 
 void SafeRelease(IUnknown* obj) {
     if (obj) {
@@ -409,6 +433,24 @@ std::wstring ResolvePathRelativeTo(const std::wstring& base_dir, const std::wstr
     return (base / p).lexically_normal().wstring();
 }
 
+std::wstring ResolveMusicPath() {
+    std::wstring assets_dir = FindAssetsDir();
+    if (!assets_dir.empty()) {
+        std::wstring candidate = JoinPath(assets_dir, L"bgm.mp3");
+        if (FileExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    std::wstring config_dir;
+    try {
+        config_dir = std::filesystem::path(ResolveConfigPath()).parent_path().wstring();
+    } catch (...) {
+        config_dir = GetExeDirectory();
+    }
+    return ResolvePathRelativeTo(config_dir, L"assets\\bgm.mp3");
+}
+
 void LoadLocalization() {
     g_i18n.clear();
     std::wstring assets_dir = FindAssetsDir();
@@ -628,6 +670,7 @@ std::string BuildConfigJson(const Config& cfg) {
     out << "  \"language\": \"" << (cfg.language == Language::Chinese ? "zh" : "en") << "\",\n";
     out << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << ",\n";
     out << "  \"pause_on_fullscreen\": " << (cfg.pause_on_fullscreen ? "true" : "false") << ",\n";
+    out << "  \"play_music\": " << (cfg.play_music ? "true" : "false") << ",\n";
     out << "  \"work_interval_minutes\": " << cfg.work_interval_minutes << ",\n";
     out << "  \"rest_seconds\": " << cfg.rest_seconds << ",\n";
     out << "  \"fade_ms\": " << cfg.fade_ms << ",\n";
@@ -677,6 +720,9 @@ void LoadConfig() {
         }
         if (ExtractBool(json, "pause_on_fullscreen", &flag)) {
             cfg.pause_on_fullscreen = flag;
+        }
+        if (ExtractBool(json, "play_music", &flag)) {
+            cfg.play_music = flag;
         }
         if (ExtractDouble(json, "work_interval_minutes", &value)) {
             cfg.work_interval_minutes = value;
@@ -767,6 +813,80 @@ void ResetTiming() {
     QueryPerformanceCounter(&g_state.last);
 }
 
+std::wstring QuoteMciPath(const std::wstring& path) {
+    std::wstring out = L"\"";
+    for (wchar_t c : path) {
+        if (c != L'"') {
+            out.push_back(c);
+        }
+    }
+    out.push_back(L'"');
+    return out;
+}
+
+void StopMusic() {
+    if (!g_music_open) {
+        return;
+    }
+    mciSendStringW(L"stop EyeBreakBgm", nullptr, 0, nullptr);
+    mciSendStringW(L"close EyeBreakBgm", nullptr, 0, nullptr);
+    g_music_open = false;
+}
+
+void StartMusic() {
+    if (!g_config.play_music) {
+        StopMusic();
+        return;
+    }
+    if (g_music_open) {
+        return;
+    }
+
+    std::wstring path = ResolveMusicPath();
+    if (path.empty() || !FileExists(path)) {
+        StopMusic();
+        return;
+    }
+
+    mciSendStringW(L"close EyeBreakBgm", nullptr, 0, nullptr);
+    std::wstring open_cmd = L"open " + QuoteMciPath(path) + L" type mpegvideo alias EyeBreakBgm";
+    if (mciSendStringW(open_cmd.c_str(), nullptr, 0, nullptr) != 0) {
+        g_music_open = false;
+        return;
+    }
+    mciSendStringW(L"set EyeBreakBgm time format milliseconds", nullptr, 0, nullptr);
+    wchar_t duration_buf[64] = {};
+    double start_ms = 0.0;
+    if (mciSendStringW(L"status EyeBreakBgm length", duration_buf, 64, nullptr) == 0) {
+        wchar_t* end = nullptr;
+        double duration_ms = std::wcstod(duration_buf, &end);
+        if (end != duration_buf && duration_ms > 1000.0) {
+            start_ms = RandomAudioStartSeconds(duration_ms / 1000.0, PlannedOverlaySeconds()) * 1000.0;
+        }
+    }
+
+    std::wstring play_cmd = L"play EyeBreakBgm";
+    if (start_ms > 0.0) {
+        play_cmd += L" from " + std::to_wstring(static_cast<long long>(start_ms));
+    }
+    play_cmd += L" repeat";
+
+    if (mciSendStringW(play_cmd.c_str(), nullptr, 0, nullptr) != 0) {
+        mciSendStringW(L"close EyeBreakBgm", nullptr, 0, nullptr);
+        g_music_open = false;
+        return;
+    }
+    g_music_open = true;
+}
+
+void UpdateMusicPlayback() {
+    if (g_overlay_visible && g_config.play_music) {
+        StartMusic();
+    } else {
+        StopMusic();
+    }
+}
+
 void StopOverlay(HWND hwnd) {
     if (!g_overlay_visible) {
         return;
@@ -774,6 +894,7 @@ void StopOverlay(HWND hwnd) {
     KillTimer(hwnd, kTimerId);
     ShowWindow(hwnd, SW_HIDE);
     g_overlay_visible = false;
+    StopMusic();
     UpdateWorkTimer();
 }
 
@@ -982,6 +1103,7 @@ void ApplyConfig(HWND hwnd) {
     if (g_overlay_visible) {
         SetTimer(hwnd, kTimerId, interval, nullptr);
     }
+    UpdateMusicPlayback();
     UpdateWorkTimer();
     ApplyAutostart();
     LoadLocalization();
@@ -1088,7 +1210,6 @@ void StartOverlay() {
     g_state.total_elapsed = 0.0;
     g_state.rest_remaining = g_config.rest_seconds;
 
-    ResetTiming();
     g_overlay_visible = true;
     g_periodic_suppressed = false;
     SetLayeredWindowAttributes(g_overlay_hwnd, 0, 0, LWA_ALPHA);
@@ -1096,6 +1217,8 @@ void StartOverlay() {
         KillTimer(g_tray_hwnd, kWorkTimerId);
     }
 
+    StartMusic();
+    ResetTiming();
     UINT interval = static_cast<UINT>(std::round(1000.0 / g_config.fps));
     if (interval < 10) {
         interval = 10;
@@ -1180,6 +1303,7 @@ void HandleTrayCommand(UINT cmd) {
             ShowAboutWindow(g_tray_hwnd ? g_tray_hwnd : g_overlay_hwnd);
             break;
         case kCmdExit:
+            StopMusic();
             if (g_overlay_hwnd) {
                 DestroyWindow(g_overlay_hwnd);
                 g_overlay_hwnd = nullptr;
@@ -1450,6 +1574,8 @@ std::wstring BuildAboutText() {
     text += Tr("about_lang", L"- language: en/zh");
     text += L"\r\n";
     text += Tr("about_autostart", L"- autostart: true/false");
+    text += L"\r\n";
+    text += Tr("about_play_music", L"- play_music: true/false");
     text += L"\r\n";
     text += Tr("about_work_interval", L"- work_interval_minutes: 0 disables periodic");
     text += L"\r\n";
@@ -1803,6 +1929,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (g_overlay_hwnd) {
         KillTimer(g_overlay_hwnd, kTimerId);
     }
+    StopMusic();
     DiscardDeviceResources();
     SafeRelease(g_wic_factory);
     if (SUCCEEDED(com_hr)) {

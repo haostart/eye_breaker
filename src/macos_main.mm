@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
 #import <QuartzCore/QuartzCore.h>
@@ -17,6 +18,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -34,7 +36,7 @@ constexpr double kMaxFps = 60.0;
 constexpr double kPi = 3.141592653589793;
 constexpr double kTrayClickDelaySeconds = 0.25;
 constexpr double kDeferSeconds = 30.0;
-constexpr double kImageModeMaxFps = 1.0;
+constexpr double kImageModeMaxFps = 5.0;
 constexpr double kLowPowerMaxFps = 10.0;
 
 enum class VisualMode { Breathing, Image, ImageBreathing };
@@ -52,6 +54,7 @@ struct Config {
     Language language = Language::English;
     bool autostart = false;
     bool pause_on_fullscreen = true;
+    bool play_music = false;
     double work_interval_minutes = 20.0;
     double rest_seconds = 20.0;
     double fade_ms = 600.0;
@@ -98,8 +101,28 @@ static NSFont* g_message_font = nil;
 static NSFont* g_countdown_font = nil;
 static NSParagraphStyle* g_paragraph_style = nil;
 static NSColor* g_text_color = nil;
+static AVAudioPlayer* g_music_player = nil;
 
 static AppController* g_app = nil;
+
+double PlannedOverlaySeconds() {
+    double fade_seconds = std::max(kMinFadeSeconds, g_config.fade_ms / 1000.0);
+    return g_config.rest_seconds + fade_seconds * 2.0;
+}
+
+double RandomAudioStartSeconds(double duration_seconds, double min_remaining_seconds) {
+    if (duration_seconds <= 1.0) {
+        return 0.0;
+    }
+    double max_start = duration_seconds - std::max(0.0, min_remaining_seconds);
+    if (max_start <= 0.0) {
+        return 0.0;
+    }
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dist(0.0, max_start);
+    return dist(gen);
+}
 
 NSString* ToNSString(const std::string& value) {
     if (value.empty()) {
@@ -377,7 +400,7 @@ std::string ResolvePathRelativeTo(const std::string& base_dir, const std::string
     return (base / p).lexically_normal().string();
 }
 
-std::string ResolveImagePath(const std::string& config_dir, const std::string& input) {
+std::string ResolveAssetPath(const std::string& config_dir, const std::string& input) {
     if (input.empty()) {
         return input;
     }
@@ -407,6 +430,20 @@ std::string ResolveImagePath(const std::string& config_dir, const std::string& i
     }
 
     return candidate;
+}
+
+std::string ResolveImagePath(const std::string& config_dir, const std::string& input) {
+    return ResolveAssetPath(config_dir, input);
+}
+
+std::string ResolveMusicPath() {
+    std::string config_dir;
+    try {
+        config_dir = std::filesystem::path(ResolveConfigPath()).parent_path().string();
+    } catch (...) {
+        config_dir = GetExeDirectory();
+    }
+    return ResolveAssetPath(config_dir, "assets/bgm.mp3");
 }
 
 void NormalizeConfig(Config& cfg, const std::string& config_dir) {
@@ -574,6 +611,7 @@ std::string BuildConfigJson(const Config& cfg) {
     out << "  \"language\": \"" << (cfg.language == Language::Chinese ? "zh" : "en") << "\",\n";
     out << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << ",\n";
     out << "  \"pause_on_fullscreen\": " << (cfg.pause_on_fullscreen ? "true" : "false") << ",\n";
+    out << "  \"play_music\": " << (cfg.play_music ? "true" : "false") << ",\n";
     out << "  \"work_interval_minutes\": " << cfg.work_interval_minutes << ",\n";
     out << "  \"rest_seconds\": " << cfg.rest_seconds << ",\n";
     out << "  \"fade_ms\": " << cfg.fade_ms << ",\n";
@@ -623,6 +661,9 @@ void LoadConfig() {
         }
         if (ExtractBool(json, "pause_on_fullscreen", &flag)) {
             cfg.pause_on_fullscreen = flag;
+        }
+        if (ExtractBool(json, "play_music", &flag)) {
+            cfg.play_music = flag;
         }
         if (ExtractDouble(json, "work_interval_minutes", &value)) {
             cfg.work_interval_minutes = value;
@@ -935,6 +976,58 @@ void ReloadImage() {
     }
 }
 
+void StopMusic() {
+    if (g_music_player) {
+        [g_music_player stop];
+        g_music_player = nil;
+    }
+}
+
+void StartMusic() {
+    if (!g_config.play_music) {
+        StopMusic();
+        return;
+    }
+    if (g_music_player && g_music_player.playing) {
+        return;
+    }
+
+    std::string path = ResolveMusicPath();
+    if (path.empty() || !FileExists(path)) {
+        StopMusic();
+        return;
+    }
+
+    @autoreleasepool {
+        NSURL* url = [NSURL fileURLWithPath:ToNSString(path)];
+        if (!url) {
+            StopMusic();
+            return;
+        }
+        AVAudioPlayer* player = [[AVAudioPlayer alloc] initWithContentsOfURL:url error:nil];
+        if (!player) {
+            StopMusic();
+            return;
+        }
+        player.numberOfLoops = -1;
+        [player prepareToPlay];
+        player.currentTime = RandomAudioStartSeconds(player.duration, PlannedOverlaySeconds());
+        if (![player play]) {
+            StopMusic();
+            return;
+        }
+        g_music_player = player;
+    }
+}
+
+void UpdateMusicPlayback() {
+    if (g_overlay_visible && g_config.play_music) {
+        StartMusic();
+    } else {
+        StopMusic();
+    }
+}
+
 std::string BuildAboutText() {
     std::string text;
     text += Tr("about_header", "Eye Break");
@@ -956,6 +1049,8 @@ std::string BuildAboutText() {
     text += Tr("about_lang", "- language: en/zh");
     text += "\n";
     text += Tr("about_autostart", "- autostart: true/false");
+    text += "\n";
+    text += Tr("about_play_music", "- play_music: true/false");
     text += "\n";
     text += Tr("about_work_interval", "- work_interval_minutes: 0 disables periodic");
     text += "\n";
@@ -1194,6 +1289,7 @@ void LoadConfigIntoControls();
 @property (nonatomic, strong) NSPopUpButton* languagePopup;
 @property (nonatomic, strong) NSButton* autostartCheckbox;
 @property (nonatomic, strong) NSButton* pauseFullscreenCheckbox;
+@property (nonatomic, strong) NSButton* playMusicCheckbox;
 @property (nonatomic, strong) NSTextField* workIntervalField;
 @property (nonatomic, strong) NSTextField* restSecondsField;
 @property (nonatomic, strong) NSTextField* fadeMsField;
@@ -1214,6 +1310,7 @@ void LoadConfigIntoControls();
 @property (nonatomic, strong) NSTextField* labelLanguage;
 @property (nonatomic, strong) NSTextField* labelAutostart;
 @property (nonatomic, strong) NSTextField* labelPauseFullscreen;
+@property (nonatomic, strong) NSTextField* labelPlayMusic;
 @property (nonatomic, strong) NSTextField* labelWorkInterval;
 @property (nonatomic, strong) NSTextField* labelRestSeconds;
 @property (nonatomic, strong) NSTextField* labelFadeMs;
@@ -1256,6 +1353,11 @@ void LoadConfigIntoControls();
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
     (void)sender;
     return NO;
+}
+
+- (void)applicationWillTerminate:(NSNotification*)notification {
+    (void)notification;
+    StopMusic();
 }
 
 - (NSTextField*)makeLabel:(NSString*)text bold:(BOOL)bold {
@@ -1325,6 +1427,7 @@ void LoadConfigIntoControls();
     place_row(self.labelLanguage, self.languagePopup);
     place_row(self.labelAutostart, self.autostartCheckbox);
     place_row(self.labelPauseFullscreen, self.pauseFullscreenCheckbox);
+    place_row(self.labelPlayMusic, self.playMusicCheckbox);
     place_row(self.labelWorkInterval, self.workIntervalField);
     place_row(self.labelRestSeconds, self.restSecondsField);
     place_row(self.labelFadeMs, self.fadeMsField);
@@ -1390,6 +1493,7 @@ void LoadConfigIntoControls();
     self.labelLanguage = [self makeLabel:TrNSString("label_language", "Language") bold:NO];
     self.labelAutostart = [self makeLabel:TrNSString("label_autostart", "Auto start") bold:NO];
     self.labelPauseFullscreen = [self makeLabel:TrNSString("label_pause_fullscreen", "Pause on fullscreen") bold:NO];
+    self.labelPlayMusic = [self makeLabel:TrNSString("label_play_music", "Play music during rest") bold:NO];
     self.labelWorkInterval = [self makeLabel:TrNSString("label_work_interval", "Work interval (minutes)") bold:NO];
     self.labelRestSeconds = [self makeLabel:TrNSString("label_rest_seconds", "Rest seconds") bold:NO];
     self.labelFadeMs = [self makeLabel:TrNSString("label_fade_ms", "Fade (ms)") bold:NO];
@@ -1410,6 +1514,7 @@ void LoadConfigIntoControls();
 
     self.autostartCheckbox = [self makeCheckbox];
     self.pauseFullscreenCheckbox = [self makeCheckbox];
+    self.playMusicCheckbox = [self makeCheckbox];
     self.workIntervalField = [self makeTextField];
     self.restSecondsField = [self makeTextField];
     self.fadeMsField = [self makeTextField];
@@ -1442,10 +1547,10 @@ void LoadConfigIntoControls();
     for (NSView* view in @[
         self.labelSectionGeneral, self.labelSectionContent, self.labelSectionBreathing,
         self.labelLanguage, self.labelAutostart, self.labelPauseFullscreen, self.labelWorkInterval,
-        self.labelRestSeconds, self.labelFadeMs, self.labelFps, self.labelMessage, self.labelVisualMode,
+        self.labelPlayMusic, self.labelRestSeconds, self.labelFadeMs, self.labelFps, self.labelMessage, self.labelVisualMode,
         self.labelImagePath, self.labelImageMode, self.labelImageOpacity, self.labelBreathCycle,
         self.labelBreathMinRadius, self.labelBreathMaxRadius, self.labelBreathOpacity,
-        self.languagePopup, self.autostartCheckbox, self.pauseFullscreenCheckbox, self.workIntervalField,
+        self.languagePopup, self.autostartCheckbox, self.pauseFullscreenCheckbox, self.playMusicCheckbox, self.workIntervalField,
         self.restSecondsField, self.fadeMsField, self.fpsField, self.messageField, self.visualModePopup,
         self.imagePathField, self.imageBrowseButton, self.imageModePopup, self.imageOpacityField,
         self.breathCycleField, self.breathMinRadiusField, self.breathMaxRadiusField, self.breathOpacityField
@@ -1625,7 +1730,6 @@ void LoadConfigIntoControls();
     g_state.total_elapsed = 0.0;
     g_state.rest_remaining = g_config.rest_seconds;
 
-    ResetTiming();
     g_overlay_visible = true;
     g_periodic_suppressed = false;
 
@@ -1633,6 +1737,8 @@ void LoadConfigIntoControls();
     [NSApp activateIgnoringOtherApps:YES];
     [self.overlayWindow makeKeyAndOrderFront:nil];
 
+    StartMusic();
+    ResetTiming();
     [self rescheduleOverlayTimer];
     [self invalidateWorkTimer];
     UpdateTrayTooltip();
@@ -1643,6 +1749,7 @@ void LoadConfigIntoControls();
         return;
     }
     g_overlay_visible = false;
+    StopMusic();
     [self invalidateOverlayTimer];
     [self.overlayWindow orderOut:nil];
     UpdateWorkTimer();
@@ -1660,6 +1767,7 @@ void LoadConfigIntoControls();
                                                        selector:@selector(overlayTimerTick:)
                                                        userInfo:nil
                                                         repeats:YES];
+    self.overlayTimer.tolerance = std::min(0.02, interval * 0.1);
 }
 
 - (void)invalidateOverlayTimer {
@@ -1759,6 +1867,9 @@ void LoadConfigIntoControls();
     }
     if (self.pauseFullscreenCheckbox) {
         cfg.pause_on_fullscreen = (self.pauseFullscreenCheckbox.state == NSControlStateValueOn);
+    }
+    if (self.playMusicCheckbox) {
+        cfg.play_music = (self.playMusicCheckbox.state == NSControlStateValueOn);
     }
     if (self.workIntervalField) {
         cfg.work_interval_minutes = ReadRoundedField(self.workIntervalField, cfg.work_interval_minutes);
@@ -1889,6 +2000,7 @@ void LoadConfigIntoControls();
 
 - (void)exitApp:(id)sender {
     (void)sender;
+    StopMusic();
     [NSApp terminate:nil];
 }
 
@@ -1912,6 +2024,7 @@ void LoadConfigIntoControls();
         self.languagePopup = nil;
         self.autostartCheckbox = nil;
         self.pauseFullscreenCheckbox = nil;
+        self.playMusicCheckbox = nil;
         self.workIntervalField = nil;
         self.restSecondsField = nil;
         self.fadeMsField = nil;
@@ -1932,6 +2045,7 @@ void LoadConfigIntoControls();
         self.labelLanguage = nil;
         self.labelAutostart = nil;
         self.labelPauseFullscreen = nil;
+        self.labelPlayMusic = nil;
         self.labelWorkInterval = nil;
         self.labelRestSeconds = nil;
         self.labelFadeMs = nil;
@@ -1960,6 +2074,7 @@ namespace {
 void ApplyConfig() {
     ReloadImage();
     UpdateTextResources();
+    UpdateMusicPlayback();
     if (g_overlay_visible && g_app) {
         [g_app performSelectorOnMainThread:@selector(rescheduleOverlayTimer) withObject:nil waitUntilDone:NO];
     }
@@ -2038,6 +2153,9 @@ void UpdateLocalizedWindowTexts() {
         }
         if (g_app.labelPauseFullscreen) {
             g_app.labelPauseFullscreen.stringValue = TrNSString("label_pause_fullscreen", "Pause on fullscreen");
+        }
+        if (g_app.labelPlayMusic) {
+            g_app.labelPlayMusic.stringValue = TrNSString("label_play_music", "Play music during rest");
         }
         if (g_app.labelWorkInterval) {
             g_app.labelWorkInterval.stringValue = TrNSString("label_work_interval", "Work interval (minutes)");
@@ -2118,6 +2236,9 @@ void LoadConfigIntoControls() {
     }
     if (g_app.pauseFullscreenCheckbox) {
         g_app.pauseFullscreenCheckbox.state = g_config.pause_on_fullscreen ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    if (g_app.playMusicCheckbox) {
+        g_app.playMusicCheckbox.state = g_config.play_music ? NSControlStateValueOn : NSControlStateValueOff;
     }
     if (g_app.workIntervalField) {
         g_app.workIntervalField.stringValue = FormatNumber(g_config.work_interval_minutes);

@@ -14,6 +14,7 @@ if(APPLE)
     )
 
     target_link_libraries(eye_breaker PRIVATE
+        "-framework AVFoundation"
         "-framework Cocoa"
         "-framework CoreGraphics"
         "-framework CoreText"
@@ -28,6 +29,7 @@ if(APPLE)
 
     set(MAC_RESOURCES
         assets/bg.png
+        assets/bgm.mp3
         assets/icon.icns
         assets/icon.ico
         assets/lang_en.txt
@@ -65,5 +67,6 @@ else()
         dwrite
         windowscodecs
         shell32
+        winmm
     )
 endif()

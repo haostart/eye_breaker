@@ -37,6 +37,8 @@ open build/eye_breaker.app
 {
   "language": "en",
   "autostart": false,
+  "pause_on_fullscreen": true,
+  "play_music": false,
   "work_interval_minutes": 20,
   "rest_seconds": 20,
   "fade_ms": 600,
@@ -53,6 +55,7 @@ open build/eye_breaker.app
 - `language`：`en` 或 `zh`（加载 `assets/lang_en.txt` / `assets/lang_zh.txt`）
 - `work_interval_minutes`：设为 `0` 关闭周期触发
 - `autostart`：Windows 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`；macOS 使用 LaunchAgents
+- `play_music`：设为 `true` 后，休息时播放 `assets/bgm.mp3`
 - `visual_mode`：`breathing` / `image` / `image+breathing`
 - `image_mode`：`fit` / `fill` / `center`
 
